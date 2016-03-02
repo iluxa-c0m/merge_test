@@ -221,6 +221,21 @@ public class HeadMergeCommitCommand implements RepoCommand {
 
 
 //smth
+  private void getFailedResult(@NotNull final String resultHead,
+                                             @NotNull final String message) {
+                                             
+                                             }
+                                             
+//smth
+
+
+
+
+
+
+
+//smth
+
   @NotNull
   private PersonIdent getAuthor(@NotNull final MergeCommitsData data) {
     final MergeAuthor author = data.getAuthor();
