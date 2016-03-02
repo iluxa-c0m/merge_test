@@ -178,6 +178,16 @@ public class HeadMergeCommitCommand implements RepoCommand {
     }
 
 
+    if (!isMergeSuccessful) {
+      final List<String> conflicts = merger.getUnmergedPaths();
+      return new MergeCommitsResult.ConflictingMergeResult(
+              data.getTargetHead(),
+              destCommit.getName(),
+              "Merge failed with conflicts. Fix them and commit the result",
+              conflicts);
+    }
+
+
     final ObjectInserter inserter = myRepo.newObjectInserter();
     final DirCache dc = DirCache.newInCore();
     final DirCacheBuilder dcb = dc.builder();
