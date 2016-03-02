@@ -176,11 +176,13 @@ public class HeadMergeCommitCommand implements RepoCommand {
       LOG.error("Merge command failed with exception. " + e.getMessage(), e);
       return getFailedResult(data.getSourceHead(), "Failed with internal git error: " + e.getMessage());
     }
-
+///add somethng here
 
     final ObjectInserter inserter = myRepo.newObjectInserter();
     final DirCache dc = DirCache.newInCore();
     final DirCacheBuilder dcb = dc.builder();
+
+///add somethng here
 
     dcb.addTree(new byte[]{}, 0, myRepo.getObjectDatabase().newReader(), merger.getResultTreeId());
     inserter.flush();
