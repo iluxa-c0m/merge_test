@@ -212,8 +212,15 @@ public class HeadMergeCommitCommand implements RepoCommand {
                     "Modified files: \n" + Joiner.on("\n").join(modifiedFiles) + "\n");
   }
 
+//smth
 
 
+
+
+
+
+
+//smth
   @NotNull
   private PersonIdent getAuthor(@NotNull final MergeCommitsData data) {
     final MergeAuthor author = data.getAuthor();
