@@ -26,6 +26,12 @@ import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.jetbrains.annotations.NotNull;
 
+
+///add somethng here
+///add somethng here
+///add somethng here
+
+
 import java.io.IOException;
 import java.util.List;
 import java.util.Set;
@@ -52,6 +58,10 @@ public class HeadMergeCommitCommand implements RepoCommand {
     mySettings = settings;
     myEventSink = eventSink;
   }
+  
+  ///add somethng here///add somethng here///add somethng here
+  ///add somethng here
+  
 
   public MergeCommitsResult execute(@NotNull final MergeCommitsData data,
                                     @NotNull final RepoWriteExecutor executor) {
