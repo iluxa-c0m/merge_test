@@ -201,6 +201,11 @@ public class HeadMergeCommitCommand implements RepoCommand {
     final ObjectId writtenTreeId = dc.writeTree(inserter);
 
     final CommitBuilder commitBuilder = new CommitBuilder();
+    
+    
+    ///add somethng here
+    ///add somethng here
+    ///add somethng here
 
     final PersonIdent pi = getAuthor(data);
     commitBuilder.setCommitter(pi);
