@@ -1,0 +1,225 @@
+package jetbrains.vcs.server.hosting.git.repo.command;
+
+import com.google.common.base.Joiner;
+import jetbrains.vcs.server.hosting.git.repo.RepoWriteExecutor;
+import jetbrains.vcs.server.hosting.git.settings.ProxySettings;
+import jetbrains.vcs.server.hosting.git.settings.RepoSettings;
+import jetbrains.vcs.server.settings.bus.EventSink;
+import jetbrains.vcs.server.settings.bus.events.VcsRepositoryPushedEvent;
+import jetbrains.vcs.server.settings.storage.errors.RecordProxiedException;
+import jetbrains.vcs.server.settings.sub.git.MergeAuthor;
+import jetbrains.vcs.server.settings.sub.git.MergeCommitsData;
+import jetbrains.vcs.server.settings.sub.git.MergeCommitsResult;
+import jetbrains.vcs.server.settings.sub.git.RepoId;
+import org.apache.log4j.Logger;
+import org.eclipse.jgit.dircache.DirCache;
+import org.eclipse.jgit.dircache.DirCacheBuilder;
+import org.eclipse.jgit.internal.storage.file.FileRepository;
+import org.eclipse.jgit.lib.CommitBuilder;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectInserter;
+import org.eclipse.jgit.lib.PersonIdent;
+import org.eclipse.jgit.lib.RefUpdate;
+import org.eclipse.jgit.merge.MergeStrategy;
+import org.eclipse.jgit.merge.ResolveMerger;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevWalk;
+import org.jetbrains.annotations.NotNull;
+
+import java.io.IOException;
+import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
+
+/**
+ * @author Sergey Voytovich (sergey.voytovich@jetbrains.com)
+ */
+public class HeadMergeCommitCommand implements RepoCommand {
+
+  private static final Logger LOG = Logger.getLogger(HeadMergeCommitCommand.class.getName());
+
+  private final FileRepository myRepo;
+  private final RepoId myRepoId;
+  private final RepoSettings mySettings;
+  private final EventSink myEventSink;
+
+  public HeadMergeCommitCommand(@NotNull final RepoId repoId,
+                                @NotNull final FileRepository repo,
+                                @NotNull final RepoSettings settings,
+                                @NotNull final EventSink eventSink) {
+    myRepoId = repoId;
+    myRepo = repo;
+    mySettings = settings;
+    myEventSink = eventSink;
+  }
+
+  public MergeCommitsResult execute(@NotNull final MergeCommitsData data,
+                                    @NotNull final RepoWriteExecutor executor) {
+    final MergeCommitsResult result = doMerge(data);
+
+    if (result instanceof MergeCommitsResult.SucceedMergeResult) {
+      final MergeCommitsResult.SucceedMergeResult mergedResult = (MergeCommitsResult.SucceedMergeResult) result;
+      return executor.execute(() -> {
+
+        final ProxySettings proxySettings = mySettings.getProxySettings();
+        if (proxySettings != null) {
+          throw new RecordProxiedException();
+        }
+        final ObjectId updatedHeadId;
+        final RefUpdate.Result updateResult;
+        try {
+          final RefUpdate refUpdate = myRepo.updateRef(mergedResult.getCommitHead());
+          refUpdate.setNewObjectId(myRepo.resolve(mergedResult.getCommitId()));
+          updateResult = refUpdate.update();
+          if (updateResult != RefUpdate.Result.NEW && updateResult != RefUpdate.Result.FAST_FORWARD) {
+            return getFailedResult(data.getTargetHead(), "Cannot update references on new merge commit. Update result has wrong status: " + updateResult);
+          }
+          updatedHeadId = refUpdate.getNewObjectId();
+        } catch (IOException e) {
+          LOG.error("Could not update reference on new commit: " + e.getMessage(), e);
+          return getFailedResult(result.getCommitHead(), "Could not update reference on built merge commit: " + e.getMessage());
+        }
+        myEventSink.postEvent(new VcsRepositoryPushedEvent(myRepoId, false));
+        return new MergeCommitsResult.SucceedMergeResult(result.getCommitHead(),
+                updatedHeadId.getName(),
+                result.getMessage() + "Update result: " + updateResult);
+      });
+    }
+
+    return result;
+  }
+
+  @NotNull
+  private MergeCommitsResult doMerge(@NotNull final MergeCommitsData data) {
+
+    RevCommit srcCommit;
+    RevCommit targetCommit;
+    try (final RevWalk walk = new RevWalk(myRepo)) {
+      try {
+        final ObjectId targetCommitId = myRepo.resolve(data.getTargetHead());
+        if (targetCommitId == null) {
+          LOG.info("Incorrect target head: " + data.getTargetHead() + " can not be resolved");
+          return getFailedResult(data.getTargetHead(), "Incorrect target head was sent. Can not resolve '" + data.getTargetHead() + "'");
+        }
+
+        if (data.getTargetCommit() != null && !targetCommitId.getName().equals(data.getTargetCommit())) {
+          LOG.info("Merge failed. Actual head and passed are mismatched. Incorrect target-commit was sent, " + data.getTargetHead() + " not refers to " + data.getTargetCommit());
+          return getFailedResult(data.getTargetHead(), "Incorrect target-commit was sent, " + data.getTargetHead() + " not refers to " + data.getTargetCommit());
+        }
+
+        targetCommit = walk.parseCommit(targetCommitId);
+      } catch (IOException e) {
+        LOG.error("Can not resolve target head " + data.getTargetHead() + ": " + e.getMessage(), e);
+        return getFailedResult(data.getTargetHead(), "Can not resolve target head. " + data.getTargetHead() + ": " + e.getMessage());
+      }
+
+      try {
+        final ObjectId sourceCommitId = ObjectId.fromString(data.getSourceCommit());
+        if (sourceCommitId == null) {
+          LOG.info("Incorrect source commit: " + data.getSourceCommit() + " can not be resolved");
+          return getFailedResult(data.getTargetHead(), "Incorrect source commit was sent. Can not resolve '" + data.getSourceCommit() + "'");
+        }
+
+        if (data.getSourceHead() != null) {
+          final ObjectId sourceCommitIdByName = myRepo.resolve(data.getSourceHead());
+          if (sourceCommitIdByName == null) {
+            LOG.info("Incorrect source head: " + data.getSourceHead() + " can not be resolved");
+            return getFailedResult(data.getTargetHead(), "Incorrect source head was sent. Can not resolve '" + data.getSourceHead() + "'");
+          }
+          if (!sourceCommitId.getName().equals(sourceCommitIdByName.getName())) {
+            LOG.info("Merge failed. Actual head and passed are mismatched. Incorrect source-head was sent, " + data.getSourceHead() + " not refers to " + data.getSourceCommit());
+            return getFailedResult(data.getTargetHead(), "Incorrect source-head was sent, " + data.getSourceHead() + " not refers to " + data.getSourceCommit());
+          }
+        }
+        srcCommit = walk.parseCommit(sourceCommitId);
+      } catch (IOException e) {
+        LOG.error("Can not resolve source commit: " + data.getSourceCommit() + ": " + e.getMessage(), e);
+        return getFailedResult(data.getTargetHead(), "Can not resolve source commit " + data.getSourceCommit() + ": " + e.getMessage());
+      }
+
+
+      try {
+        if (walk.isMergedInto(srcCommit, targetCommit)) {
+          return new MergeCommitsResult.AlreadyUpToDateMergeResult(
+                  data.getTargetHead(),
+                  targetCommit.getName(),
+                  "Source commit " + data.getSourceCommit() + " already merged into head " + data.getTargetHead());
+        }
+      } catch (IOException e) {
+        LOG.error("Walking over commits failed: " + e.getMessage(), e);
+        return getFailedResult(data.getTargetHead(), "Walking over commits failed: " + e.getMessage());
+      }
+
+      try {
+        return buildMergeCommit(targetCommit, srcCommit, data);
+      } catch (IOException e) {
+        LOG.error("Merge commit building has failed: " + e.getMessage(), e);
+        return getFailedResult(data.getTargetHead(), "Merge commit building has faied: " + e.getMessage());
+      }
+    }
+  }
+
+  @NotNull
+  private MergeCommitsResult buildMergeCommit(@NotNull final RevCommit destCommit,
+                                              @NotNull final RevCommit sourceCommit,
+                                              @NotNull final MergeCommitsData data) throws IOException {
+    //the merge will happen in memory, working folder will not be
+    //modified, in case of a non-trivial merge that requires manual
+    //resolution, the merger will fail.
+    final boolean inCore = true;
+
+    final ResolveMerger merger = (ResolveMerger) MergeStrategy.RECURSIVE.newMerger(myRepo, inCore);
+    final boolean isMergeSuccessful;
+    try {
+     isMergeSuccessful = merger.merge(destCommit, sourceCommit);
+    } catch (IOException e) {
+      LOG.error("Merge command failed with exception. " + e.getMessage(), e);
+      return getFailedResult(data.getSourceHead(), "Failed with internal git error: " + e.getMessage());
+    }
+
+
+    final ObjectInserter inserter = myRepo.newObjectInserter();
+    final DirCache dc = DirCache.newInCore();
+    final DirCacheBuilder dcb = dc.builder();
+
+    dcb.addTree(new byte[]{}, 0, myRepo.getObjectDatabase().newReader(), merger.getResultTreeId());
+    inserter.flush();
+    dcb.finish();
+
+    final ObjectId writtenTreeId = dc.writeTree(inserter);
+
+    final CommitBuilder commitBuilder = new CommitBuilder();
+
+    final PersonIdent pi = getAuthor(data);
+    commitBuilder.setCommitter(pi);
+    commitBuilder.setAuthor(pi);
+
+    final String message = data.getMessage();
+    commitBuilder.setMessage(message != null ? message : "");
+    commitBuilder.addParentId(destCommit);
+    commitBuilder.addParentId(sourceCommit);
+    commitBuilder.setTreeId(writtenTreeId);
+
+    final ObjectId commitId = inserter.insert(commitBuilder);
+    inserter.flush();
+
+    Set<String> modifiedFiles = new TreeSet<>(merger.getToBeCheckedOut().keySet());
+
+    return new MergeCommitsResult.SucceedMergeResult(
+            data.getTargetHead(),
+            commitId.getName(),
+            "Successfully merged.\n" +
+                    "Modified files: \n" + Joiner.on("\n").join(modifiedFiles) + "\n");
+  }
+
+
+
+  @NotNull
+  private PersonIdent getAuthor(@NotNull final MergeCommitsData data) {
+    final MergeAuthor author = data.getAuthor();
+    if (author == null) {
+      return new PersonIdent("git-hosting", "git-hosting-no-reply@jetbrains.com");
+    }
+    return new PersonIdent(author.getName(), author.getEmail());
+  }
+}
