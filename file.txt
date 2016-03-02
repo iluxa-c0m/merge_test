@@ -221,10 +221,12 @@ public class HeadMergeCommitCommand implements RepoCommand {
 
 
 //smth
-  private void getFailedResult(@NotNull final String resultHead,
+  private MergeCommitsResult getFailedResult(@NotNull final String resultHead,
                                              @NotNull final String message) {
-                                             
-                                             }
+    //to do
+    //return 
+    return new MergeCommitsResult.FailedMergeResult(resultHead, message);
+  }
                                              
 //smth
 
