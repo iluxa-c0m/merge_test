@@ -221,7 +221,13 @@ public class HeadMergeCommitCommand implements RepoCommand {
                     "Modified files: \n" + Joiner.on("\n").join(modifiedFiles) + "\n");
   }
 
-
+  @NotNull
+  private MergeCommitsResult getFailedResult(@NotNull final String resultHead,
+                                             @NotNull final String message) {
+    //to do
+    //return 
+    return new MergeCommitsResult.FailedMergeResult(resultHead, message);
+  }
 
   @NotNull
   private PersonIdent getAuthor(@NotNull final MergeCommitsData data) {
