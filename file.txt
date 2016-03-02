@@ -217,6 +217,7 @@ public class HeadMergeCommitCommand implements RepoCommand {
                                              @NotNull final String message) {
     //to do
     //return 
+    return new MergeCommitsResult.FailedMergeResult(resultHead, message);
   }
 
   @NotNull
